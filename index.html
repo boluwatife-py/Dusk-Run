@@ -1,0 +1,546 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+<style>html,body{margin:0}[hidden]{display:none!important}</style>
+<title>Dusk Run</title>
+<link rel="preconnect" href="https://fonts.googleapis.com">
+<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+<link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Barlow+Semi+Condensed:wght@500;600&family=Chakra+Petch:ital,wght@0,600;1,700&display=swap">
+<style>
+/* Layout: full-bleed WebGL road view, HUD pinned to the top edge, touch steering zones split the screen in half, start/game-over panel anchored bottom-left. */
+:root {
+  --night: #14121f;
+  --dusk: #e9906b;
+  --sun: #ffd08a;
+  --paper: #fff4e6;
+  --signal: #2d6cff;
+  --font-display: "Chakra Petch", "Trebuchet MS", system-ui, sans-serif;
+  --font-body: "Barlow Semi Condensed", "Arial Narrow", system-ui, sans-serif;
+  color-scheme: dark;
+}
+html, body { height: 100%; }
+body {
+  background: var(--night);
+  color: var(--paper);
+  font-family: var(--font-body);
+  overflow: hidden;
+  touch-action: none;
+  -webkit-user-select: none;
+  user-select: none;
+  -webkit-tap-highlight-color: transparent;
+}
+#app { position: relative; width: 100%; height: 100%; overflow: hidden; }
+#c { position: absolute; inset: 0; width: 100%; height: 100%; display: block; }
+
+.hud {
+  position: absolute; top: 0; left: 0; right: 0; z-index: 3;
+  display: flex; justify-content: space-between; align-items: flex-start; gap: 8px;
+  padding: 14px max(16px, env(safe-area-inset-left, 0px)) 0 max(16px, env(safe-area-inset-left, 0px));
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  pointer-events: none;
+  text-shadow: 0 1px 10px rgba(20, 18, 31, .55);
+}
+.stat { display: flex; flex-direction: column; min-width: 0; }
+.stat.right { align-items: flex-end; text-align: right; }
+.lbl { font-size: .72rem; letter-spacing: .16em; text-transform: uppercase; opacity: .85; }
+.val { font-family: var(--font-display); font-style: italic; font-weight: 700; font-size: clamp(1.35rem, 6vw, 2.2rem); line-height: 1.05; font-variant-numeric: tabular-nums; }
+.unit { font-size: .8rem; font-weight: 600; opacity: .85; margin-left: .25em; font-style: normal; }
+
+#mute {
+  position: absolute; z-index: 6;
+  top: 10px; left: 50%; transform: translateX(-50%);
+  width: 44px; height: 44px; border-radius: 50%;
+  display: grid; place-items: center;
+  background: rgba(20, 18, 31, .38); color: var(--paper);
+  border: 1px solid rgba(255, 244, 230, .25); cursor: pointer;
+}
+#mute svg { width: 20px; height: 20px; }
+#mute .off { display: none; }
+#mute[aria-pressed="true"] .on { display: none; }
+#mute[aria-pressed="true"] .off { display: block; }
+
+.zone {
+  position: absolute; top: 0; bottom: 0; width: 50%; z-index: 2;
+  display: flex; align-items: flex-end; padding: 0 max(16px, env(safe-area-inset-left, 0px)) 22px;
+  background: transparent; border: 0; cursor: pointer; color: var(--paper);
+}
+.zone.l { left: 0; justify-content: flex-start; }
+.zone.r { right: 0; justify-content: flex-end; }
+.zone svg { width: 52px; height: 52px; padding: 12px; border-radius: 50%; background: rgba(20, 18, 31, .32); border: 1px solid rgba(255, 244, 230, .3); transition: background .08s, transform .08s; }
+.zone.on svg { background: rgba(255, 208, 138, .55); transform: scale(.94); }
+@media (hover: hover) and (pointer: fine) { .zone svg { display: none; } }
+
+.panel {
+  position: absolute; z-index: 5; left: 0; right: 0; bottom: 0; top: 0;
+  display: flex; align-items: flex-end;
+  padding: 16px max(16px, env(safe-area-inset-left, 0px)) 28px;
+  padding-right: max(16px, env(safe-area-inset-right, 0px));
+  background: linear-gradient(to top, rgba(20, 18, 31, .82), rgba(20, 18, 31, .15) 70%, rgba(20, 18, 31, 0));
+  overflow-y: auto;
+}
+.panel[hidden] { display: none; }
+.card { width: min(100%, 420px); display: flex; flex-direction: column; gap: 12px; margin-top: auto; }
+.kicker { font-size: .78rem; letter-spacing: .2em; text-transform: uppercase; color: var(--sun); }
+h1 { margin: 0; font-family: var(--font-display); font-style: italic; font-weight: 700; font-size: clamp(2.3rem, 13vw, 4.2rem); line-height: .95; text-wrap: balance; }
+.sub { margin: 0; font-size: 1.05rem; line-height: 1.35; max-width: 34ch; opacity: .92; }
+.pair { display: flex; gap: 22px; flex-wrap: wrap; }
+.pair .val { font-size: clamp(1.4rem, 7vw, 2rem); }
+.btn {
+  align-self: flex-start; cursor: pointer;
+  font-family: var(--font-display); font-weight: 600; font-size: 1.05rem; letter-spacing: .08em; text-transform: uppercase;
+  padding: 13px 26px; min-height: 48px; color: var(--night); background: var(--sun);
+  border: 0; border-radius: 4px; box-shadow: 0 6px 0 #b9824a;
+  transition: transform .08s, box-shadow .08s;
+}
+.btn:hover { background: #ffdca4; }
+.btn:active { transform: translateY(4px); box-shadow: 0 2px 0 #b9824a; }
+.btn:focus-visible, #mute:focus-visible, .zone:focus-visible { outline: 3px solid var(--signal); outline-offset: 3px; }
+.keys { font-size: .9rem; opacity: .75; margin: 0; }
+.keys .touch-only { display: none; }
+@media (hover: none) { .keys .touch-only { display: inline; } .keys .kb-only { display: none; } }
+#nogl[hidden] { display: none; }
+#nogl { position: absolute; inset: 0; z-index: 9; display: grid; place-items: center; padding: 24px; text-align: center; background: var(--night); }
+@media (max-height: 420px) { h1 { font-size: 2rem; } .sub { display: none; } .panel { padding-bottom: 14px; } }
+@media (prefers-reduced-motion: reduce) { .btn, .zone svg { transition: none; } }
+</style>
+
+</head>
+<body>
+<div id="app">
+  <canvas id="c"></canvas>
+
+  <div class="hud" aria-live="off">
+    <div class="stat"><span class="lbl">Distance</span><span><span class="val" id="score">0</span><span class="unit">m</span></span></div>
+    <div class="stat right"><span class="lbl">Speed</span><span><span class="val" id="speed">0</span><span class="unit">km/h</span></span></div>
+  </div>
+
+  <button id="mute" type="button" aria-label="Sound" aria-pressed="false">
+    <svg class="on" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M16.5 8.5a5 5 0 0 1 0 7"/><path d="M19 6a8.5 8.5 0 0 1 0 12"/></svg>
+    <svg class="off" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 9v6h4l5 4V5L8 9H4z"/><path d="M17 9l5 6M22 9l-5 6"/></svg>
+  </button>
+
+  <button class="zone l" id="zl" type="button" aria-label="Steer left"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M14 5l-7 7 7 7"/></svg></button>
+  <button class="zone r" id="zr" type="button" aria-label="Steer right"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M10 5l7 7-7 7"/></svg></button>
+
+  <div class="panel" id="start">
+    <div class="card">
+      <span class="kicker">Highway sprint</span>
+      <h1>Dusk Run</h1>
+      <p class="sub">Weave through evening traffic. The road gets faster the longer you last.</p>
+      <div class="pair"><div class="stat"><span class="lbl">Best</span><span><span class="val" id="best0">0</span><span class="unit">m</span></span></div></div>
+      <button class="btn" id="go" type="button">Start driving</button>
+      <p class="keys"><span class="kb-only">Steer with ← → or A / D.</span><span class="touch-only">Touch the left or right half of the screen to steer.</span></p>
+    </div>
+  </div>
+
+  <div class="panel" id="over" hidden>
+    <div class="card">
+      <span class="kicker" id="overKick">Crashed</span>
+      <h1>Run over</h1>
+      <div class="pair">
+        <div class="stat"><span class="lbl">Distance</span><span><span class="val" id="finalScore">0</span><span class="unit">m</span></span></div>
+        <div class="stat"><span class="lbl">Best</span><span><span class="val" id="best1">0</span><span class="unit">m</span></span></div>
+      </div>
+      <button class="btn" id="again" type="button">Drive again</button>
+      <p class="keys"><span class="kb-only">Press Space to restart.</span></p>
+    </div>
+  </div>
+
+  <div id="nogl" hidden><p>This demo needs WebGL, which is turned off or unsupported in this browser.</p></div>
+</div>
+
+<script src="https://cdnjs.cloudflare.com/ajax/libs/three.js/r128/three.min.js"></script>
+<script>
+(function () {
+  var T = window.THREE;
+  var $ = function (id) { return document.getElementById(id); };
+  var app = $('app'), canvas = $('c');
+
+  var renderer;
+  try {
+    renderer = new T.WebGLRenderer({ canvas: canvas, antialias: true, powerPreference: 'high-performance' });
+  } catch (e) { $('nogl').hidden = false; return; }
+  renderer.setPixelRatio(Math.min(window.devicePixelRatio || 1, 2));
+
+  /* ---------- constants ---------- */
+  var ROAD_W = 12, TILE = 24, ROAD_LEN = 360;
+  var FOG = 0xe9906b;
+  var LANES = [-4, 0, 4];
+  var V_START = 24, V_MAX = 62, ACC = 1.1;
+
+  var scene = new T.Scene();
+  scene.fog = new T.Fog(FOG, 45, 200);
+  var camera = new T.PerspectiveCamera(60, 1, 0.1, 2200);
+
+  /* ---------- lights ---------- */
+  scene.add(new T.HemisphereLight(0xffc7a0, 0x2a2540, 1.0));
+  var sunLight = new T.DirectionalLight(0xffd2a8, 0.85);
+  sunLight.position.set(-12, 24, 22);
+  scene.add(sunLight);
+
+  /* ---------- sky dome, sun, mountains ---------- */
+  var sky;
+  (function () {
+    var c = document.createElement('canvas'); c.width = 8; c.height = 512;
+    var g = c.getContext('2d'), gr = g.createLinearGradient(0, 0, 0, 512);
+    gr.addColorStop(0, '#12112f'); gr.addColorStop(0.28, '#3a2a66'); gr.addColorStop(0.42, '#b9567f');
+    gr.addColorStop(0.49, '#e9906b'); gr.addColorStop(1, '#e9906b');
+    g.fillStyle = gr; g.fillRect(0, 0, 8, 512);
+    var tex = new T.CanvasTexture(c);
+    sky = new T.Mesh(new T.SphereGeometry(1000, 24, 16),
+      new T.MeshBasicMaterial({ map: tex, side: T.BackSide, fog: false, depthWrite: false }));
+    sky.renderOrder = -2;
+    scene.add(sky);
+  })();
+
+  var sun = new T.Mesh(new T.CircleGeometry(40, 48), new T.MeshBasicMaterial({ color: 0xffdba6, fog: false }));
+  sun.position.set(0, 36, -520); scene.add(sun);
+  var halo = new T.Mesh(new T.CircleGeometry(110, 48), new T.MeshBasicMaterial({ color: 0xffb27a, fog: false, transparent: true, opacity: 0.28, depthWrite: false }));
+  halo.position.set(0, 36, -525); scene.add(halo);
+
+  function mountains(z, color, hMin, hMax, seed) {
+    var mat = new T.MeshBasicMaterial({ color: color, fog: false });
+    var s = seed;
+    function rnd() { s = (s * 16807) % 2147483647; return s / 2147483647; }
+    for (var x = -700; x <= 700; x += 60 + rnd() * 30) {
+      var h = hMin + rnd() * (hMax - hMin), r = h * (1.1 + rnd() * 0.7);
+      var m = new T.Mesh(new T.ConeGeometry(r, h, 5), mat);
+      m.position.set(x, h / 2 - 1, z - rnd() * 20); scene.add(m);
+    }
+  }
+  mountains(-420, 0x4a2f6b, 38, 80, 7);
+  mountains(-330, 0x2a1d45, 22, 52, 13);
+
+  /* ---------- ground and road ---------- */
+  var ground = new T.Mesh(new T.PlaneGeometry(1400, 1400), new T.MeshLambertMaterial({ color: 0x3a4a3f }));
+  ground.rotation.x = -Math.PI / 2; ground.position.y = -0.02; scene.add(ground);
+
+  var roadTex = (function () {
+    var c = document.createElement('canvas'); c.width = 256; c.height = 512;
+    var g = c.getContext('2d');
+    g.fillStyle = '#2b2d38'; g.fillRect(0, 0, 256, 512);
+    for (var i = 0; i < 3200; i++) {
+      g.fillStyle = 'rgba(255,255,255,' + (Math.random() * 0.05) + ')';
+      g.fillRect(Math.random() * 256, Math.random() * 512, 2, 2);
+    }
+    var u = function (x) { return (0.5 + x / ROAD_W) * 256; };
+    g.fillStyle = '#ece7da';
+    g.fillRect(u(-5.6) - 3, 0, 6, 512); g.fillRect(u(5.6) - 3, 0, 6, 512);
+    [-2, 2].forEach(function (x) { for (var k = 0; k < 2; k++) g.fillRect(u(x) - 3, k * 256, 6, 128); });
+    var t = new T.CanvasTexture(c);
+    t.wrapS = t.wrapT = T.RepeatWrapping;
+    t.repeat.set(1, ROAD_LEN / TILE);
+    t.anisotropy = renderer.capabilities.getMaxAnisotropy();
+    return t;
+  })();
+  var road = new T.Mesh(new T.PlaneGeometry(ROAD_W, ROAD_LEN), new T.MeshLambertMaterial({ map: roadTex }));
+  road.rotation.x = -Math.PI / 2; road.position.set(0, 0, 30 - ROAD_LEN / 2); scene.add(road);
+
+  /* ---------- scenery (recycled) ---------- */
+  var SCEN_LEN = 300;
+  var scenery = [];
+  var trunkG = new T.CylinderGeometry(0.25, 0.35, 1.6, 6), trunkM = new T.MeshLambertMaterial({ color: 0x4a3326 });
+  var coneG1 = new T.ConeGeometry(1.9, 3.6, 7), coneG2 = new T.ConeGeometry(1.4, 3, 7);
+  var leafM = new T.MeshLambertMaterial({ color: 0x1f4a3d }), leafM2 = new T.MeshLambertMaterial({ color: 0x2b6150 });
+  function makeTree() {
+    var g = new T.Group();
+    var t = new T.Mesh(trunkG, trunkM); t.position.y = 0.8; g.add(t);
+    var a = new T.Mesh(coneG1, leafM); a.position.y = 3; g.add(a);
+    var b = new T.Mesh(coneG2, leafM2); b.position.y = 4.8; g.add(b);
+    return g;
+  }
+  function placeTree(g, z) {
+    var side = Math.random() < 0.5 ? -1 : 1, s = 0.8 + Math.random() * 0.9;
+    g.position.set(side * (9 + Math.random() * 26), 0, z);
+    g.scale.setScalar(s); g.rotation.y = Math.random() * 6;
+  }
+  for (var i = 0; i < 46; i++) {
+    var tr = makeTree(); placeTree(tr, 20 - (i / 46) * SCEN_LEN); scene.add(tr);
+    scenery.push({ o: tr, tree: true });
+  }
+  var poleG = new T.CylinderGeometry(0.1, 0.12, 6.4, 6), poleM = new T.MeshLambertMaterial({ color: 0x38354a });
+  var armG = new T.BoxGeometry(1.8, 0.1, 0.1), bulbG = new T.SphereGeometry(0.28, 10, 8);
+  var bulbM = new T.MeshBasicMaterial({ color: 0xffe3a8 });
+  for (var k = 0; k < 24; k++) {
+    var side = k % 2 ? 1 : -1, lamp = new T.Group();
+    var p = new T.Mesh(poleG, poleM); p.position.y = 3.2; lamp.add(p);
+    var arm = new T.Mesh(armG, poleM); arm.position.set(-side * 0.9, 6.35, 0); lamp.add(arm);
+    var bulb = new T.Mesh(bulbG, bulbM); bulb.position.set(-side * 1.7, 6.2, 0); lamp.add(bulb);
+    lamp.position.set(side * 7.2, 0, 20 - Math.floor(k / 2) * 25);
+    scene.add(lamp); scenery.push({ o: lamp, tree: false });
+  }
+
+  /* ---------- cars ---------- */
+  var shadowTex = (function () {
+    var c = document.createElement('canvas'); c.width = c.height = 64;
+    var g = c.getContext('2d'), r = g.createRadialGradient(32, 32, 4, 32, 32, 32);
+    r.addColorStop(0, 'rgba(0,0,0,.55)'); r.addColorStop(1, 'rgba(0,0,0,0)');
+    g.fillStyle = r; g.fillRect(0, 0, 64, 64);
+    return new T.CanvasTexture(c);
+  })();
+  var shadowM = new T.MeshBasicMaterial({ map: shadowTex, transparent: true, depthWrite: false });
+  var wheelG = new T.CylinderGeometry(0.38, 0.38, 0.3, 14); wheelG.rotateZ(Math.PI / 2);
+  var wheelM = new T.MeshLambertMaterial({ color: 0x0e0e12 });
+  var glassM = new T.MeshPhongMaterial({ color: 0x182030, shininess: 90, specular: 0x8899bb });
+  var tailM = new T.MeshBasicMaterial({ color: 0xff3030 }), headM = new T.MeshBasicMaterial({ color: 0xfff1c4 });
+  var bodyG = new T.BoxGeometry(1.8, 0.55, 4.2), cabG = new T.BoxGeometry(1.5, 0.5, 2.0);
+  var vanG = new T.BoxGeometry(1.9, 1.5, 4.6), lightG = new T.BoxGeometry(0.5, 0.14, 0.06);
+  var spoilG = new T.BoxGeometry(1.7, 0.07, 0.45), postG = new T.BoxGeometry(0.08, 0.28, 0.08);
+  var stripeG = new T.BoxGeometry(0.36, 0.02, 4.22);
+
+  function makeCar(color, van, stripe) {
+    var g = new T.Group(), hw = 0.9, hl = 2.1;
+    var paint = new T.MeshPhongMaterial({ color: color, shininess: 70, specular: 0x666666 });
+    var sh = new T.Mesh(new T.PlaneGeometry(2.6, van ? 5.4 : 5), shadowM);
+    sh.rotation.x = -Math.PI / 2; sh.position.y = 0.03; g.add(sh);
+    if (van) {
+      var vb = new T.Mesh(vanG, paint); vb.position.y = 1.1; g.add(vb);
+      var rw = new T.Mesh(new T.BoxGeometry(1.5, 0.5, 0.05), glassM); rw.position.set(0, 1.45, 2.32); g.add(rw);
+      hw = 0.95; hl = 2.3;
+    } else {
+      var b = new T.Mesh(bodyG, paint); b.position.y = 0.62; g.add(b);
+      var cab = new T.Mesh(cabG, glassM); cab.position.set(0, 1.12, 0.25); g.add(cab);
+      var sp = new T.Mesh(spoilG, paint); sp.position.set(0, 1.18, 1.95); g.add(sp);
+      [-0.6, 0.6].forEach(function (x) { var pp = new T.Mesh(postG, paint); pp.position.set(x, 1.0, 1.95); g.add(pp); });
+      if (stripe) { var st = new T.Mesh(stripeG, new T.MeshBasicMaterial({ color: 0xf6f1e6 })); st.position.y = 0.9; g.add(st); }
+    }
+    [[-0.95, -1.35], [0.95, -1.35], [-0.95, 1.35], [0.95, 1.35]].forEach(function (p) {
+      var w = new T.Mesh(wheelG, wheelM); w.position.set(p[0], 0.38, p[1]); g.add(w);
+    });
+    var ly = van ? 0.75 : 0.72, lz = van ? 2.32 : 2.12;
+    [-0.55, 0.55].forEach(function (x) {
+      var t = new T.Mesh(lightG, tailM); t.position.set(x, ly, lz); g.add(t);
+      var h = new T.Mesh(lightG, headM); h.position.set(x, ly, -lz); g.add(h);
+    });
+    g.userData = { hw: hw, hl: hl };
+    return g;
+  }
+
+  var player = makeCar(0x2d6cff, false, true);
+  scene.add(player);
+
+  var COLORS = [0xe0503f, 0xf2c14e, 0xe9e4d8, 0x8b8f9c, 0xd9803a, 0x4fb38f, 0xb868c9];
+  var traffic = [];
+  for (var n = 0; n < 11; n++) {
+    var van = n % 4 === 3;
+    var tc = makeCar(COLORS[n % COLORS.length], van, false);
+    tc.visible = false; scene.add(tc);
+    traffic.push({ o: tc, active: false, cs: 16, lane: 0, spin: 0 });
+  }
+
+  /* ---------- state ---------- */
+  var state = 'ready';
+  var v = 22, x = 0, vx = 0, dist = 0, spawnT = 0, lastLane = -1, spin = 0, shake = 0, overTimer = 0;
+  var best = 0;
+  try { best = parseInt(localStorage.getItem('duskrun-best') || '0', 10) || 0; } catch (e) {}
+  var left = false, right = false;
+  var elScore = $('score'), elSpeed = $('speed');
+  $('best0').textContent = best;
+
+  function resetRun() {
+    v = V_START; x = 0; vx = 0; dist = 0; spawnT = 0.6; lastLane = -1; spin = 0; shake = 0;
+    player.rotation.set(0, 0, 0); player.position.set(0, 0, 0);
+    traffic.forEach(function (c) { c.active = false; c.o.visible = false; c.o.rotation.set(0, 0, 0); c.spin = 0; });
+  }
+
+  /* ---------- audio ---------- */
+  var actx = null, master = null, engine = null, engGain = null, muted = false;
+  try { muted = localStorage.getItem('duskrun-muted') === '1'; } catch (e) {}
+  function setMuteUI() { $('mute').setAttribute('aria-pressed', muted ? 'true' : 'false'); if (master) master.gain.value = muted ? 0 : 0.8; }
+  function initAudio() {
+    if (actx) { if (actx.state === 'suspended') actx.resume(); return; }
+    try {
+      var AC = window.AudioContext || window.webkitAudioContext; if (!AC) return;
+      actx = new AC(); master = actx.createGain(); master.connect(actx.destination);
+      var filt = actx.createBiquadFilter(); filt.type = 'lowpass'; filt.frequency.value = 520;
+      engGain = actx.createGain(); engGain.gain.value = 0;
+      engine = actx.createOscillator(); engine.type = 'sawtooth'; engine.frequency.value = 60;
+      var eng2 = actx.createOscillator(); eng2.type = 'square'; eng2.frequency.value = 30;
+      engine.connect(filt); eng2.connect(filt); filt.connect(engGain); engGain.connect(master);
+      engine.start(); eng2.start(); engine._sub = eng2;
+      setMuteUI();
+    } catch (e) { actx = null; }
+  }
+  function crashSound() {
+    if (!actx) return;
+    var len = actx.sampleRate * 0.6, buf = actx.createBuffer(1, len, actx.sampleRate), d = buf.getChannelData(0);
+    for (var i = 0; i < len; i++) d[i] = (Math.random() * 2 - 1) * Math.pow(1 - i / len, 2.2);
+    var s = actx.createBufferSource(); s.buffer = buf;
+    var f = actx.createBiquadFilter(); f.type = 'lowpass'; f.frequency.value = 900;
+    var gn = actx.createGain(); gn.gain.value = 0.7;
+    s.connect(f); f.connect(gn); gn.connect(master); s.start();
+  }
+  function engineUpdate() {
+    if (!actx || !engine) return;
+    var t = actx.currentTime, on = state === 'run';
+    var f = 48 + v * 2.6;
+    engine.frequency.setTargetAtTime(f, t, 0.06);
+    engine._sub.frequency.setTargetAtTime(f / 2, t, 0.06);
+    engGain.gain.setTargetAtTime(on ? 0.05 : 0, t, 0.1);
+  }
+
+  /* ---------- flow ---------- */
+  function startRun() {
+    initAudio(); resetRun(); state = 'run';
+    $('start').hidden = true; $('over').hidden = true;
+  }
+  function crash(hit) {
+    state = 'over'; overTimer = 0.75; shake = 0.7;
+    spin = (Math.random() < 0.5 ? -1 : 1) * 5;
+    vx += (x > hit.o.position.x ? 1 : -1) * 6;
+    hit.spin = 4; crashSound();
+    var final = Math.floor(dist), isBest = final > best;
+    if (isBest) { best = final; try { localStorage.setItem('duskrun-best', String(best)); } catch (e) {} }
+    $('finalScore').textContent = final; $('best1').textContent = best; $('best0').textContent = best;
+    $('overKick').textContent = isBest && final > 0 ? 'New best' : 'Crashed';
+  }
+
+  function spawn() {
+    var free = traffic.filter(function (c) { return !c.active; });
+    if (!free.length) return;
+    var c = free[0], lane, tries = 0;
+    do { lane = Math.floor(Math.random() * 3); tries++; } while ((lane === lastLane && Math.random() < 0.6) && tries < 4);
+    var blocked = traffic.some(function (o) { return o.active && o.lane === lane && o.o.position.z < -170 - 0 && o.o.position.z > -260; });
+    if (blocked) return;
+    lastLane = lane; c.lane = lane; c.active = true; c.cs = 13 + Math.random() * 8; c.spin = 0;
+    c.o.rotation.set(0, 0, 0); c.o.position.set(LANES[lane], 0, -230); c.o.visible = true;
+  }
+
+  function update(dt) {
+    if (state === 'run') v = Math.min(V_MAX, v + ACC * dt);
+    else if (state === 'ready') v = 22;
+    else v *= Math.pow(0.04, dt);
+
+    var d = v * dt;
+    dist += state === 'run' ? d : 0;
+    roadTex.offset.y += d / TILE;
+    scenery.forEach(function (s) {
+      s.o.position.z += d;
+      if (s.o.position.z > 14) { s.o.position.z -= SCEN_LEN; if (s.tree) placeTree(s.o, s.o.position.z); }
+    });
+
+    if (state === 'run') {
+      var steer = (right ? 1 : 0) - (left ? 1 : 0);
+      var target = steer * (9 + v * 0.07);
+      vx += (target - vx) * Math.min(1, dt * 9);
+    } else {
+      vx *= Math.pow(0.1, dt);
+    }
+    x += vx * dt;
+    var lim = 5.0;
+    if (x > lim) { x = lim; if (vx > 0) vx = 0; } else if (x < -lim) { x = -lim; if (vx < 0) vx = 0; }
+
+    player.position.x = x;
+    if (state === 'over') {
+      spin *= Math.pow(0.15, dt);
+      player.rotation.y += spin * dt;
+    } else {
+      player.rotation.y = -vx * 0.03;
+    }
+    player.rotation.z = state === 'over' ? 0 : vx * 0.009;
+    player.position.y = state === 'run' ? Math.sin(performance.now() * 0.03) * 0.012 * (v / V_MAX) : 0;
+
+    if (state === 'run') {
+      spawnT -= dt;
+      if (spawnT <= 0) { spawn(); spawnT = Math.max(0.5, 1.45 - (v - V_START) / 55) * (0.8 + Math.random() * 0.5); }
+    }
+    for (var i = 0; i < traffic.length; i++) {
+      var c = traffic[i]; if (!c.active) continue;
+      var o = c.o;
+      o.position.z += (v - c.cs) * dt;
+      if (c.spin) { o.rotation.y += c.spin * dt; c.spin *= Math.pow(0.2, dt); }
+      if (o.position.z > 16 || o.position.z < -300) { c.active = false; o.visible = false; continue; }
+      if (state === 'run') {
+        var h = o.userData, p = player.userData || {};
+        if (Math.abs(o.position.x - x) < (0.9 + h.hw) * 0.88 && Math.abs(o.position.z) < (2.1 + h.hl) * 0.9) { crash(c); }
+      }
+    }
+
+    if (state === 'over') {
+      overTimer -= dt;
+      if (overTimer <= 0 && $('over').hidden) $('over').hidden = false;
+    }
+
+    elScore.textContent = Math.floor(dist);
+    elSpeed.textContent = Math.round(v * 3.6);
+    engineUpdate();
+  }
+
+  /* ---------- camera ---------- */
+  var aspect = 1;
+  function updateCamera(dt) {
+    var kick = (v - V_START) / (V_MAX - V_START);
+    var hfov = (aspect < 1 ? 68 : 66) + Math.max(0, kick) * 9;
+    var vfov = 2 * Math.atan(Math.tan(hfov * Math.PI / 360) / aspect) * 180 / Math.PI;
+    camera.fov = Math.min(100, Math.max(46, vfov));
+    camera.aspect = aspect; camera.updateProjectionMatrix();
+    var back = 8.6 + Math.max(0, 1 - aspect) * 3.5;
+    var tx = x * 0.7;
+    camera.position.x += (tx - camera.position.x) * Math.min(1, dt * 6);
+    camera.position.y = 3.3 + Math.max(0, 1 - aspect) * 1.1;
+    camera.position.z = back;
+    shake *= Math.pow(0.02, dt);
+    if (shake > 0.01) { camera.position.x += (Math.random() - 0.5) * shake; camera.position.y += (Math.random() - 0.5) * shake * 0.6; }
+    camera.lookAt(x * 0.4, 1.3, -14);
+    sky.position.copy(camera.position);
+  }
+
+  /* ---------- resize ---------- */
+  function resize() {
+    var w = Math.max(1, app.clientWidth), h = Math.max(1, app.clientHeight);
+    renderer.setSize(w, h, false); aspect = w / h;
+  }
+  if (window.ResizeObserver) new ResizeObserver(resize).observe(app);
+  window.addEventListener('resize', resize); resize();
+
+  /* ---------- input ---------- */
+  window.addEventListener('keydown', function (e) {
+    var k = e.key;
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') { left = true; e.preventDefault(); }
+    else if (k === 'ArrowRight' || k === 'd' || k === 'D') { right = true; e.preventDefault(); }
+    else if (k === ' ' || k === 'Enter') {
+      if (state === 'ready' && document.activeElement !== $('go')) { e.preventDefault(); startRun(); }
+      else if (state === 'over' && !$('over').hidden && document.activeElement !== $('again')) { e.preventDefault(); startRun(); }
+    }
+  });
+  window.addEventListener('keyup', function (e) {
+    var k = e.key;
+    if (k === 'ArrowLeft' || k === 'a' || k === 'A') left = false;
+    else if (k === 'ArrowRight' || k === 'd' || k === 'D') right = false;
+  });
+  window.addEventListener('blur', function () { left = right = false; $('zl').classList.remove('on'); $('zr').classList.remove('on'); });
+  function bindZone(id, setter) {
+    var el = $(id);
+    el.addEventListener('pointerdown', function (e) { e.preventDefault(); try { el.setPointerCapture(e.pointerId); } catch (err) {} setter(true); el.classList.add('on'); });
+    ['pointerup', 'pointercancel', 'lostpointercapture'].forEach(function (ev) {
+      el.addEventListener(ev, function () { setter(false); el.classList.remove('on'); });
+    });
+    el.addEventListener('contextmenu', function (e) { e.preventDefault(); });
+  }
+  bindZone('zl', function (b) { left = b; });
+  bindZone('zr', function (b) { right = b; });
+  $('go').addEventListener('click', startRun);
+  $('again').addEventListener('click', startRun);
+  $('mute').addEventListener('click', function () {
+    muted = !muted; try { localStorage.setItem('duskrun-muted', muted ? '1' : '0'); } catch (e) {}
+    setMuteUI();
+  });
+  setMuteUI();
+
+  /* ---------- loop ---------- */
+  var last = performance.now();
+  function frame(now) {
+    requestAnimationFrame(frame);
+    var dt = Math.min(0.05, Math.max(0.001, (now - last) / 1000)); last = now;
+    update(dt); updateCamera(dt);
+    renderer.render(scene, camera);
+  }
+  requestAnimationFrame(frame);
+  window.__duskrun = { get state() { return state; }, get dist() { return dist; } };
+})();
+</script>
+
+</body>
+</html>
